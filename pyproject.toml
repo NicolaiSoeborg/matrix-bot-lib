@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "simple-matrix-bot-lib"
+version = "0.1.0"
+description = ""
+authors = ["Nicolai Søborg <git@xn--sb-lka.org>"]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+httpx = {extras = ["http2"], version = "^0.23.0"}
+result = "^0.8.0"
+
+[tool.poetry.dev-dependencies]
+pytest = "^5.2"
+mypy = "^0.971"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
