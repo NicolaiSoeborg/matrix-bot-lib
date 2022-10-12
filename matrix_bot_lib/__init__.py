@@ -3,9 +3,9 @@ __version__ = '0.1.0'
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Awaitable, Callable, Dict, List, Optional
-from MatrixModels import EventMessage, EventReaction, StrippedStateEvent, T_Listener, EventMetadata, RoomsResponse, TokenResponse
+from MatrixModels import T_Listener, EventMetadata, RoomsResponse, TokenResponse
 from result import Result, Ok, Err
-import httpx
+import os, httpx
 
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -13,7 +13,8 @@ logging.basicConfig(level=logging.INFO)
 
 class MatrixBot:
     # Max retries per request if getting '429: Too Many Requests'
-    MAX_RETRIES = 6
+    # exponential backoff is applied between each request
+    MAX_RETRIES = 5
 
     def __init__(self, bot_user: str) -> None:
         """ bot_user: The fully-qualified Matrix ID for the bot
@@ -23,8 +24,10 @@ class MatrixBot:
         self.user_id = bot_user
         _, server_name = bot_user.split(":", 1)
 
+        # Find homeserver => det hedder autodiscovery
+
         self.client = httpx.AsyncClient(
-            base_url=MatrixBot.get_homeserver(server_name),
+            base_url=MatrixBot.AutoDiscovery(server_name),
             http2=True)
 
         # Auth
@@ -44,7 +47,7 @@ class MatrixBot:
         return r.status_code == 200 and 'versions' in r.json()
 
     @classmethod
-    def get_homeserver(cls, server_name: str) -> httpx.URL:
+    def AutoDiscovery(cls, server_name: str) -> httpx.URL:
         """Test if `server_name` is a homeserver. Otherwise lookup and test `.well-known`.
         """
         maybe_homeserver = httpx.URL(f'https://{server_name}/_matrix/')
@@ -103,80 +106,85 @@ class MatrixBot:
     def on_message(self, func: T_Listener) -> T_Listener:
         self.listeners['m.room.message'].append(func)
         return func
+
     def on_reaction(self, func: T_Listener) -> T_Listener:
-        #               m.room.redaction ?
         self.listeners['m.reaction'].append(func)
         return func
+
     def on_invite(self, func: T_Listener) -> T_Listener:
-        # TODO: To join POST /_matrix/client/v3/join/{roomIdOrAlias}
-        # TODO: Or use  POST /_matrix/client/v3/rooms/{roomId}/join
-        #               m.room.member ?
-        self.listeners['???'].append(func)
+        # Invite is a special type of membership change
+        async def aux(room_id: str, content: dict , metadata: dict):
+            if content['membership'] == 'invite':
+                await func(room_id, content, metadata)
+        self.listeners['m.room.member'].append(aux)
         return func
 
-    def is_not_from_this_bot(self, metadata: EventMetadata) -> bool:
-        assert self.user_id is not None
-        return self.user_id != metadata.sender
+    def on_membership_change(self, func: T_Listener) -> T_Listener:
+        self.listeners['m.room.member'].append(func)
+        return func
+
+    async def join_room(self, room_id_or_alias: str) -> bool:
+        #assert room_id_or_alias.startswith("!") and ":" in room_id_or_alias, room_id_or_alias
+        # !FOKXiIbZGIJwMFEBaX:pyjam.as
+        #room_id, homeserver = room_id_or_alias.split(":", 1)
+        match await self._POST(f"client/v3/join/{room_id_or_alias}", {}):
+            case Ok(r):
+                print(r)
+                print(r.status_code)
+                print(r.text)
+                print(r.json())
+            case wat:
+                print(wat)
+        return True
 
     async def sync(self, params: dict) -> Optional[str]:
-        print(f'sync: {params=}')
         match await self._GET("client/v3/sync", params=params):
             case Ok({'next_batch': next_batch, 'rooms': rooms_dict}):
                 rooms_dict = RoomsResponse.from_dict(rooms_dict)
-                for room_id, room_dict in rooms_dict.join.items():
-                    self.parse_room_join(room_id, room_dict)
-                for room_id, room_dict in rooms_dict.invite.items():
-                    self.parse_room_invite(room_id, room_dict)
+                await self._process_room_response(rooms_dict)
                 return next_batch
             case Ok({'next_batch': next_batch}):
                 return next_batch
             case Ok(wat):
-                print(f"sync, WAT: {wat}")
+                logging.warning(f"sync, WAT: {wat}")
             case Err(e):
                 print(e)
         return None
 
-    def parse_room_invite(self, room_id: str, room_dict: RoomsResponse.invite):
-        match room_dict:
-            case {"invite_state": {"events": [*events]}}:
+    async def _process_room_response(self, rooms_dict: RoomsResponse) -> None:
+        # Sooo many nested levels, this loops over:
+        # rooms_dict[invite] => {room_id: {'invite_state': {'events': [...]}}}
+        # rooms_dict[join] => {room_id: {'account_data': {'events': [...]}, 'state': {'events': [...]}, ...}}
+        mapper = [
+            ('invite', 'invite_state'),
+            ('join', 'timeline'),  # TODO: if `room_dict["timeline"]["limited"]=True` then we need to fetch `room_dict["timeline"]["prev_batch"]`
+            ('join', 'state'),
+            ('join', 'account_data'),
+            ('join', 'ephemeral'),
+        ]
+        for prop, nested_name in mapper:
+            for room_id, room_dict in getattr(rooms_dict, prop).items():
+                events = room_dict.get(nested_name, {}).get('events', [])
                 for event in events:
-                    # print(f'invite_state->event: {event}')
-                    match event:
-                        case {"type": "m.room.member", "content": evt_content, **rest}:
-                                rest['room_id'] = room_id
-                                for f in self.listeners['???']:
-                                    f(evt_content.copy(), metadata=EventMetadata.from_dict(rest))
+                    await self._process_room_event(room_id, event)
+        # TODO: process rooms_dict.knock & rooms_dict.leave
 
-    def parse_room_join(self, room_id: str, room_dict: RoomsResponse.join):
-        match room_dict:
-            case {"timeline": {"events": [*events]}}:
-                for event in events:
-                    match event:
-                        case {"type": evt_type, "content": evt_content, **rest}:
-                            if evt_type in self.listeners:
-                                rest['room_id'] = room_id
-                                for f in self.listeners[evt_type]:
-                                    f(evt_content.copy(), metadata=EventMetadata.from_dict(rest))
-                            else:
-                                logging.info(f"Skipping {evt_type}, no listeners")
-                        case wat:
-                            logging.warning(f"Skipping unknown event on timeline.  Data: {wat}")
+    async def _process_room_event(self, room_id: str, event: dict):
+        match event:
+            case {'content': content, 'type': typ, **metadata}:
+                if typ in self.listeners:
+                    for listener in self.listeners[typ]:
+                        await listener(room_id, content, metadata)
+                else:
+                    logging.info(f'No listeners for {typ=}.')
+
+            case unknown:
+                logging.warning(f'Unknown event: {unknown}')
 
     async def run(self, full_sync=True) -> None:
         if next_batch := await self.sync({'full_state': full_sync, 'timeout': 5_000}):
             while (next_batch := await self.sync({'since': next_batch, 'timeout': 3_000})):
-                print("Syncing")
-
-    #async def login_accessToken(self, access_token: str) -> bool:
-    #    self.access_token = access_token
-    #    match await self._GET("client/v3/account/whoami"):
-    #        case Ok({"user_id": user_id}):
-    #            self.user_id = user_id
-    #            return True
-    #        case Err(e):
-    #            del self.access_token
-    #            print(e)
-    #    return False
+                logging.info("Syncing")
 
     def _save_tokens(self, tokens: TokenResponse):
         """ Given the result of login/RefreshTokenExchange this method will save the
@@ -235,35 +243,33 @@ class MatrixBot:
 
 async def main() -> None:
     BOT_USER = "@dtuhax-bot:xn--sb-lka.org"
-    BOT_PASS = "..."
+    BOT_PASS = os.environ['matrix_bot_password']
 
     bot = MatrixBot(BOT_USER)
     await bot.login(BOT_PASS)
 
     @bot.on_message
-    def recv_msg(event_content: EventMessage, metadata: EventMetadata):
-        assert metadata.room_id == '!fiandOepnZTYCvP4mk:xn--sb-lka.org', metadata
-        assert metadata.sender == '@n:xn--sb-lka.org'
-        # match = botlib.MessageMatch(room, message, bot, PREFIX)
-        # if match.is_not_from_this_bot() and match.prefix() and match.command("echo"):
-        if bot.is_not_from_this_bot(metadata):
-            print(f'recv_msg (not from me): {event_content=}')
-        else:
-            print(f'recv_msg (from me !): {event_content=}')
+    async def recv_msg(room_id: str, content: dict, metadata: dict):
+        match room_id, content:
+            # TODO: Pizza room_id
+            case '!fiandOepnZTYCvP4mk:xn--sb-lka.org', {'body': msg_txt, 'msgtype': 'm.text'}:
+                logging.info(f'Message in pizza room: {msg_txt}')
+        #print(f'recv_msg({room_id=}, {content=}, {metadata=})')
 
     @bot.on_reaction
-    def recv_react(event_content: EventReaction, metadata: EventMetadata):
-        assert metadata.room_id == '!fiandOepnZTYCvP4mk:xn--sb-lka.org'
-        assert metadata.sender == '@n:xn--sb-lka.org'
-        print(f'recv_react: {event_content=}')
+    async def recv_react(room_id: str, content: dict, metadata: dict):
+        """ MSC2677 """
+        match room_id, content:
+            # TODO: Pizza room_id
+            case '!fiandOepnZTYCvP4mk:xn--sb-lka.org', {'m.relates_to': {'rel_type': 'm.annotation', 'key': emoji}}:
+                logging.info(f'Reaction in Pizza room: {emoji=}')
 
-    @bot.on_invite
-    def recv_invite(event_content: StrippedStateEvent, metadata: EventMetadata):
-        assert metadata.room_id == '!fiandOepnZTYCvP4mk:xn--sb-lka.org'
-        assert metadata.sender == '@n:xn--sb-lka.org'
-        print(f'recv_react: {event_content=}')
+    #@bot.on_invite
+    #async def recv_invite(room_id: str, content: dict, metadata: dict):
+    #    bot.join_room(room_id)
+    #    logging.info(f'recv_invite: {room_id=}, {content=}, {metadata=}')
 
-    await bot.run(full_sync=False)
+    await bot.run(full_sync=True)
 
 if __name__ == '__main__':
     import asyncio

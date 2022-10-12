@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Any, Callable, Optional, TypedDict, NamedTuple
+from typing import Any, Callable, Literal, Optional, TypeAlias, TypedDict, NamedTuple
 
 class TokenResponse(NamedTuple):
     refresh_token: Optional[str] = None
@@ -11,9 +11,8 @@ class TokenResponse(NamedTuple):
             return datetime.now() + timedelta(milliseconds=self.expires_in_ms)
 
     @classmethod
-    def from_dict(cls, dict: dict) -> 'TokenResponse':
-        KEYS = ['refresh_token', 'access_token', 'expires_in_ms']
-        return cls(**{k: v for k, v in dict.items() if k in KEYS})
+    def from_dict(cls, data: dict) -> 'TokenResponse':
+        return cls(**{k: v for k, v in data.items() if k in TokenResponse._fields})
 
 class EventMetadata(NamedTuple):
     room_id: str
@@ -23,75 +22,101 @@ class EventMetadata(NamedTuple):
     unsigned: dict = {}
 
     @classmethod
-    def from_dict(cls, dict: dict) -> 'EventMetadata':
-        print(f"EVT META: {dict}")
-        KEYS = ['room_id', 'sender', 'event_id', 'origin_server_ts', 'unsigned']
-        if 'origin_server_ts' in dict:
-            dict['origin_server_ts'] = datetime.fromtimestamp(dict['origin_server_ts'] / 1000)
-        return cls(**{k: v for k, v in dict.items() if k in KEYS})
+    def from_dict(cls, data: dict) -> 'EventMetadata':
+        if 'origin_server_ts' in data:
+            data['origin_server_ts'] = datetime.fromtimestamp(data['origin_server_ts'] / 1000)
+        return cls(**{k: v for k, v in data.items() if k in EventMetadata._fields})
 
 # TODO: better name (what does the spec call it?)
-class EventMessage(NamedTuple):
-    body: str     # Hello World
-    msgtype: str  # m.text
+class EventContent(NamedTuple):
+    body: str     # Textual representation of this message, e.g. "Hello World"
+    msgtype: str  # Type of message, e.g. "m.image" or "m.text"
 
+_EventReactionRelatesTo = TypedDict('_EventReactionRelatesTo', {
+    'event_id': str,  # $S8t6cy8w052poncLoPq_WGc11bJOl9nfmaXbuEb7crg
+    'key': str,       # 🚪
+    'rel_type': str,  # m.annotation
+})
 # This can't be a `NamedTuple` because `m.relates_to` is not a valid identifier
 EventReaction = TypedDict('EventReaction', {
     'shortcode': str,       # door
-    'm.relates_to': NamedTuple('EventReactionRelatesTo', [
-        ('event_id', str),  # $S8t6cy8w052poncLoPq_WGc11bJOl9nfmaXbuEb7crg
-        ('key', str),       # 🚪
-        ('rel_type', str),  # m.annotation
-    ])
+    'm.relates_to': _EventReactionRelatesTo,
 })
 
-StrippedStateEvent = TypedDict('StrippedStateEvent', {
-    'content': TypedDict('EventContent', {
+_StrippedStateEventContent = TypedDict('_StrippedStateEventContent', {
+    'avatar_url': Optional[str],
+    # displayname: string null
+    'is_direct': Optional[bool],
+    'join_authorised_via_users_server': Optional[str],
+    'membership': Literal['invite', 'join', 'knock', 'leave', 'ban'],
+    'reason': Optional[str],
+    # third_party_invite: Invite
+})
+#StrippedStateEvent = TypedDict('StrippedStateEvent', {
+#    'content': _StrippedStateEventContent,
+#    'sender': str,
+#    'state_key': str,
+#    'type': str,
+#})
+class StrippedStateEvent(NamedTuple):
+    #content: _StrippedStateEventContent
+    content: TypedDict('StrippedStateEventContent', {  # type: ignore
         'avatar_url': Optional[str],
         # displayname: string null
         'is_direct': Optional[bool],
         'join_authorised_via_users_server': Optional[str],
-        'membership': str,  # Enum: invite join knock leave ban
+        'membership': Literal['invite', 'join', 'knock', 'leave', 'ban'],
         'reason': Optional[str],
         # third_party_invite: Invite
-    }),
-    'sender': str,
-    'state_key': str,
-    'type': str,
-})
+    })
+    sender: str
+    state_key: str
+    type: str
+
+class Timeline(NamedTuple):
+    events: list[TypedDict('ClientEventWithoutRoomID', {  # type: ignore
+        'content': dict,
+        'event_id': str,
+        'origin_server_ts': int,
+        'sender': str,
+        'state_key': Optional[str],
+        'type': str,
+        'unsigned': Optional[dict],
+    })]
+    limited: Optional[bool]
+    prev_batch: Optional[str]
+
 
 class RoomsResponse(NamedTuple):
-    invite: Optional[TypedDict('InvitedRoom', {
+    invite: Optional[TypedDict('InvitedRoom', {  # type: ignore
         'invite_state': TypedDict('InviteState', {
             'events': list[StrippedStateEvent]
         })
     })]
-    join: TypedDict('JoinedRoom', {
+    join: TypedDict('JoinedRoom', {  # type:ignore
         #'ephemeral': {'events': list[Event]},
-        'timeline': Optional[TypedDict('Timeline', {
-            'events': list[TypedDict('ClientEventWithoutRoomID', {
-                'content': dict,
-                'event_id': str,
-                'origin_server_ts': int,
-                'sender': str,
-                'state_key': Optional[str],
-                'type': str,
-                'unsigned': Optional[dict],
-            })],
-            'limited': Optional[bool],
-            'prev_batch': Optional[str],
-        })],
+        'timeline': Optional[Timeline],
     })
+    knock: Optional[TypedDict('KnockedRoom', {  # type: ignore
+        'knock_state': TypedDict('KnockState', {
+            'events': list[StrippedStateEvent]
+        })
+    })]
+    leave: Optional[TypedDict('LeftRoom', {  # type: ignore
+        'account_data': Optional[dict],
+        'state': Optional[dict],
+        'timeline': Optional[Timeline],
+    })]
 
     @classmethod
-    def from_dict(cls, dict: dict) -> 'RoomsResponse':
-        KEYS = ['invite', 'join']  # TODO: knock, leave
-        for missing in [k for k in KEYS if k not in dict]:
-            dict[missing] = {}
-        return cls(**{k: v for k, v in dict.items() if k in KEYS})
+    def from_dict(cls, data: dict) -> 'RoomsResponse':
+        for missing in [k for k in RoomsResponse._fields if k not in data]:
+            data[missing] = {}
+        return cls(**{k: v for k, v in data.items() if k in RoomsResponse._fields})
 
 # A listener should be: `f(EventData, EventMetadata)`
-# E.g. `f(EventMessage, EventMetadata)`
-EventData = EventMessage | EventReaction | StrippedStateEvent
-T_Listener = Callable[[EventData, EventMetadata], None]
+# E.g. `f(EventContent, EventMetadata)`
+#EventData: TypeAlias = EventContent | EventReaction | StrippedStateEvent
 
+# f(room_id, event_content, metadata)
+T_Listener = Callable[[str, dict, dict], None]
