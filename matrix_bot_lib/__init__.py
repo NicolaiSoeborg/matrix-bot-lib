@@ -3,7 +3,7 @@ __version__ = '0.1.0'
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Awaitable, Callable, Dict, List, Optional
-from MatrixModels import T_Listener, EventMetadata, RoomsResponse, TokenResponse
+from MatrixModels import T_Listener, RoomsResponse, TokenResponse
 from result import Result, Ok, Err
 import os, httpx
 
@@ -79,18 +79,22 @@ class MatrixBot:
             Err(errcode | message)
         """
         for retry_cnt in range(MatrixBot.MAX_RETRIES):
-            r = await func()
-            match r.status_code, r.json():
-                case 200, result:
-                    return Ok(result)
-                case 429, result:
-                    await asyncio.sleep(result.get('retry_after_ms', 2**retry_cnt) / 1000)
-                    continue
-                case 401 | 403, {"errcode": errcode, "error": error}:
-                    logging.warning(f'{r.url}: {error}')
-                    return Err(errcode)
-                case status_code, result:
-                    return Err(f"Unknown: {status_code=}: {result=}")
+            try:
+                r = await func()
+                match r.status_code, r.json():
+                    case 200, result:
+                        return Ok(result)
+                    case 429, result:
+                        await asyncio.sleep(result.get('retry_after_ms', 2**retry_cnt*1000) / 1000)
+                        continue
+                    case 401 | 403, {"errcode": errcode, "error": error}:
+                        logging.warning(f'{r.url}: {error}')
+                        return Err(errcode)
+                    case status_code, result:
+                        logging.warning(f"Unknown: {status_code=}: {result=}. Sleeping {2**(retry_cnt-1)}s and retrying")
+                await asyncio.sleep(2**(retry_cnt-1))
+            except httpx.ConnectError as ex:
+                logging.warning(f'Timeout: {ex}. Retrying.')
         return Err(f"Did not manage to make request after {retry_cnt+1} retries")
 
     async def _POST(self, path: str, j, **kwargs) -> Result[dict, str]:
@@ -240,36 +244,33 @@ class MatrixBot:
                 print(e)
         return False
 
-
 async def main() -> None:
     BOT_USER = "@dtuhax-bot:xn--sb-lka.org"
-    BOT_PASS = os.environ['matrix_bot_password']
+    from getpass import getpass
+    BOT_PASS = getpass(f'Password for {BOT_USER}: ')
 
     bot = MatrixBot(BOT_USER)
     await bot.login(BOT_PASS)
 
     @bot.on_message
     async def recv_msg(room_id: str, content: dict, metadata: dict):
-        match room_id, content:
+        match content:
             # TODO: Pizza room_id
-            case '!fiandOepnZTYCvP4mk:xn--sb-lka.org', {'body': msg_txt, 'msgtype': 'm.text'}:
+            case {'body': msg_txt, 'msgtype': 'm.text'}:
+                if 'door' in msg_txt.lower():
+                    os.system('timeout 2.8 aplay /home/hackerlab/doorbell-1.wav &')
                 logging.info(f'Message in pizza room: {msg_txt}')
-        #print(f'recv_msg({room_id=}, {content=}, {metadata=})')
 
     @bot.on_reaction
     async def recv_react(room_id: str, content: dict, metadata: dict):
         """ MSC2677 """
-        match room_id, content:
+        match content:
             # TODO: Pizza room_id
-            case '!fiandOepnZTYCvP4mk:xn--sb-lka.org', {'m.relates_to': {'rel_type': 'm.annotation', 'key': emoji}}:
-                logging.info(f'Reaction in Pizza room: {emoji=}')
+            case {'m.relates_to': {'rel_type': 'm.annotation', 'key': emoji}}:
+                if emoji == '🚪':
+                    os.system('timeout 2.8 aplay /home/hackerlab/doorbell-1.wav &')
 
-    #@bot.on_invite
-    #async def recv_invite(room_id: str, content: dict, metadata: dict):
-    #    bot.join_room(room_id)
-    #    logging.info(f'recv_invite: {room_id=}, {content=}, {metadata=}')
-
-    await bot.run(full_sync=True)
+    await bot.run(full_sync=False)
 
 if __name__ == '__main__':
     import asyncio
