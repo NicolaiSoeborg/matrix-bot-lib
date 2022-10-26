@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Awaitable, Callable, Dict, List, Optional
 from MatrixModels import T_Listener, RoomsResponse, TokenResponse
 from result import Result, Ok, Err
+from string import ascii_letters, digits
 import os, httpx
 
 import logging
@@ -257,9 +258,16 @@ async def main() -> None:
         match content:
             # TODO: Pizza room_id
             case {'body': msg_txt, 'msgtype': 'm.text'}:
+                logging.info(f'Message in pizza room: {msg_txt}')
+                if msg_txt.startswith("!speak"):
+                    msg_txt = msg_txt[6:]
+                    alph = ascii_letters + digits + " "
+                    msg_txt = ''.join(c for c in msg_txt if c in alph)  # security
+                    while '  ' in msg_txt:
+                        msg_txt = msg_txt.replace('  ', ' ')
+                    os.system(f'timeout 10 espeak-ng "{msg_txt}" &')
                 if 'door' in msg_txt.lower():
                     os.system('timeout 2.8 aplay /home/hackerlab/doorbell-1.wav &')
-                logging.info(f'Message in pizza room: {msg_txt}')
 
     @bot.on_reaction
     async def recv_react(room_id: str, content: dict, metadata: dict):
