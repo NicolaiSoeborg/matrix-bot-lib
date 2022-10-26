@@ -1,5 +1,3 @@
-__version__ = '0.1.0'
-
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Awaitable, Callable, Dict, List, Optional
@@ -207,9 +205,6 @@ class MatrixBot:
         return False
 
     async def login(self, password: str, device_id: Optional[str] = None) -> bool:
-        # While debugging:
-        device_id = 'jqIrfOF3Ub'
-
         match await self._GET("client/v3/login"):
             case Ok({"flows": supported_login_types}):
                 if {'type': 'm.login.password'} not in supported_login_types:
