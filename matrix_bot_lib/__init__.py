@@ -261,7 +261,7 @@ async def main() -> None:
                 logging.info(f'Message in pizza room: {msg_txt}')
                 if msg_txt.startswith("!speak"):
                     msg_txt = msg_txt[6:]
-                    alph = ascii_letters + digits + " "
+                    alph = ascii_letters + digits + " $"
                     msg_txt = ''.join(c for c in msg_txt if c in alph)  # security
                     while '  ' in msg_txt:
                         msg_txt = msg_txt.replace('  ', ' ')
