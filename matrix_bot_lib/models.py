@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Any, Callable, Literal, Optional, TypeAlias, TypedDict, NamedTuple
+from typing import Any, Callable, Coroutine, Literal, Optional, TypeAlias, TypedDict, NamedTuple
 
 class TokenResponse(NamedTuple):
     refresh_token: Optional[str] = None
@@ -9,6 +9,7 @@ class TokenResponse(NamedTuple):
     def get_expiry(self) -> Optional[datetime]:
         if self.access_token and self.expires_in_ms:
             return datetime.now() + timedelta(milliseconds=self.expires_in_ms)
+        return None
 
     @classmethod
     def from_dict(cls, data: dict) -> 'TokenResponse':
@@ -119,4 +120,6 @@ class RoomsResponse(NamedTuple):
 #EventData: TypeAlias = EventContent | EventReaction | StrippedStateEvent
 
 # f(room_id, event_content, metadata)
-T_Listener = Callable[[str, dict, dict], None]
+#T_Listener = Coroutine[None, [str, dict, dict], None]
+T_Listener = Callable[[str, dict, dict], Coroutine]
+

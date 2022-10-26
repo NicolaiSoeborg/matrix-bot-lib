@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "simple-matrix-bot-lib"
-version = "0.1.0"
-description = ""
+name = "matrix-bot-lib"
+version = "0.1.3"
+description = "Super early lib for interacting with Matrix"
 authors = ["Nicolai Søborg <git@xn--sb-lka.org>"]
 
 [tool.poetry.dependencies]
