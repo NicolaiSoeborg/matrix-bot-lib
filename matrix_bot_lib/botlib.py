@@ -85,14 +85,23 @@ class MatrixBot:
                     case 429, result:
                         await asyncio.sleep(result.get('retry_after_ms', 2**retry_cnt*1000) / 1000)
                         continue
+                    case 401 | 403, {"errcode": "M_UNKNOWN_TOKEN"}:
+                        logging.info(f'Got M_UNKNOWN_TOKEN, trying to relogin')
+                        success = await self.login(self.password, self.device_id)
+                        if success:
+                            continue
+                        else:
+                            logging.warning(f'Could not relogin')
                     case 401 | 403, {"errcode": errcode, "error": error}:
+                        # https://matrix.xn--sb-lka.org/ matrix/client/v3/sync?since=54001&timeout=3000: : Unknown access token.
                         logging.warning(f'{r.url}: {error}')
                         return Err(errcode)
                     case status_code, result:
                         logging.warning(f"Unknown: {status_code=}: {result=}. Sleeping {2**(retry_cnt-1)}s and retrying")
                 await asyncio.sleep(2**(retry_cnt-1))
-            except httpx.ConnectError as ex:
-                logging.warning(f'Timeout: {ex}. Retrying.')
+            except Exception as ex:
+                logging.warning(f'Err {ex} Retrying.')
+
         return Err(f"Did not manage to make request after {retry_cnt+1} retries")
 
     async def _POST(self, path: str, j, **kwargs) -> Result[dict, str]:
@@ -210,6 +219,7 @@ class MatrixBot:
                 if {'type': 'm.login.password'} not in supported_login_types:
                     logging.warning(f'm.login.password not supported ({supported_login_types})')
                     return False
+                self.password = password  # hmm, when does conduit support RefreshToken?
             case Err(e):
                 return False
 
@@ -230,6 +240,7 @@ class MatrixBot:
 
                 if device_id:
                     assert device_id == returned_device_id
+                self.device_id = returned_device_id
 
                 self._save_tokens(TokenResponse.from_dict(rest))
                 return True
