@@ -157,7 +157,7 @@ class MatrixBot:
             case Ok(wat):
                 logging.warning(f"sync, WAT: {wat}")
             case Err(e):
-                logging.warning(f"sync, ERR: {wat}")
+                logging.warning(f"sync, ERR: {e}")
         return None
 
     async def _process_room_response(self, rooms_dict: RoomsResponse) -> None:
