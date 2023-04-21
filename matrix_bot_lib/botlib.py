@@ -191,8 +191,8 @@ class MatrixBot:
                 logging.warning(f'Unknown event: {unknown}')
 
     async def run(self, full_sync=True) -> None:
-        if next_batch := await self.sync({'full_state': full_sync, 'timeout': 5_000}):
-            while (next_batch := await self.sync({'since': next_batch, 'timeout': 3_000})):
+        if next_batch := await self.sync({'full_state': full_sync, 'timeout': 7_000}):
+            while (next_batch := await self.sync({'since': next_batch, 'timeout': 5_000})):
                 logging.info("Syncing")
 
     def _save_tokens(self, tokens: TokenResponse):
