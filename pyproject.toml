@@ -1,16 +1,16 @@
 [tool.poetry]
 name = "matrix-bot-lib"
-version = "0.1.8"
+version = "0.1.8"  # rememeber to also change in __init__.py
 description = "Super early lib for interacting with Matrix"
 authors = ["Nicolai Søborg <git@xn--sb-lka.org>"]
 
 [tool.poetry.dependencies]
 python = "^3.10"
 httpx = {extras = ["http2"], version = "^0.27.0"}
-result = "^0.8.0"
+result = "^0.17.0"
 
 [tool.poetry.dev-dependencies]
-pytest = "^5.2"
+pytest = "^8.3"
 mypy = "^0.971"
 
 [build-system]

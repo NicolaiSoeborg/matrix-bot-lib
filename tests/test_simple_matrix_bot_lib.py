@@ -1,7 +1,7 @@
 from matrix_bot_lib import __version__, MatrixBot
 
 def test_version():
-    assert __version__ == '0.1.0'
+    assert __version__ == '0.1.8'
 
 async def test_bot_auth():
     USER = "@dtuhax-bot:xn--sb-lka.org"
