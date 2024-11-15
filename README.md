@@ -37,7 +37,7 @@ async def main() -> None:
         """ MSC2677 """
         match content:
             case {'m.relates_to': {'rel_type': 'm.annotation', 'key': emoji}}:
-			    print(f'Reaction: {emoji}')  # e.g. '🚪'
+                print(f'Reaction: {emoji}')  # e.g. '🚪'
 
     await bot.run(full_sync=False)
 
