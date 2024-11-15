@@ -1,7 +1,9 @@
 [tool.poetry]
 name = "matrix-bot-lib"
+#dynamic = ["version"]
 version = "0.1.8"  # rememeber to also change in __init__.py
 description = "Super early lib for interacting with Matrix"
+readme = "README.md"
 authors = ["Nicolai Søborg <git@xn--sb-lka.org>"]
 
 [tool.poetry.dependencies]
